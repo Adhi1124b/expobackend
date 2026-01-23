@@ -10,7 +10,7 @@ const port = process.env.PORT || 5600;
 app.use(cors());
 app.use(express.json());
 
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion,ObjectId } = require("mongodb");
 
 const uri = process.env.MONGO_URI;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -212,12 +212,13 @@ app.get("/dashboard", verifyToken, async (req, res) => {
 });
 
 // ================= PROFILE + ACTIVITY HISTORY =================
+// ================= PROFILE + ACTIVITY HISTORY =================
 app.get("/settings", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
     const user = await users.findOne(
-      { _id: new require("mongodb").ObjectId(userId) },
+      { _id: new ObjectId(userId) },
       { projection: { password: 0 } }
     );
 
@@ -231,10 +232,11 @@ app.get("/settings", verifyToken, async (req, res) => {
       activities: userActivities,
     });
   } catch (error) {
-    console.error(error);
+    console.error("SETTINGS ERROR:", error);
     res.status(500).send({ message: "Failed to load settings data" });
   }
 });
+
 
     console.log("Auth server connected to MongoDB");
   } catch (err) {
