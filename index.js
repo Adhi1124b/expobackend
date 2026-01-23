@@ -211,6 +211,30 @@ app.get("/dashboard", verifyToken, async (req, res) => {
   }
 });
 
+// ================= PROFILE + ACTIVITY HISTORY =================
+app.get("/settings", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const user = await users.findOne(
+      { _id: new require("mongodb").ObjectId(userId) },
+      { projection: { password: 0 } }
+    );
+
+    const userActivities = await activities
+      .find({ userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      user,
+      activities: userActivities,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Failed to load settings data" });
+  }
+});
 
     console.log("Auth server connected to MongoDB");
   } catch (err) {
