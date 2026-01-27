@@ -447,6 +447,30 @@ async function run() {
       });
     });
 
+    app.get("/settings", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const user = await users.findOne(
+      { _id: new ObjectId(userId) },
+      { projection: { password: 0 } }
+    );
+
+    const userActivities = await activities
+      .find({ userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      user,
+      activities: userActivities,
+    });
+  } catch (error) {
+    console.error("SETTINGS ERROR:", error);
+    res.status(500).send({ message: "Failed to load settings data" });
+  }
+});
+
     // ================= POINTS =================
     app.get("/points", verifyToken, async (req, res) => {
       const list = await activities.find({ userId: req.user.id }).toArray();
