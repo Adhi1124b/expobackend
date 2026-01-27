@@ -237,12 +237,96 @@ app.get("/settings", verifyToken, async (req, res) => {
   }
 });
 
+function calculatePoints(category, value) {
+  const rate = POINT_RULES[category] || 0;
+  return rate * Number(value);
+}
+
+function calculateBadges(activities) {
+  const badges = [];
+
+  const water = activities.filter(a => a.category === "Water Conservation").length;
+  const tree = activities.filter(a => a.category === "Tree Plantation").length;
+  const waste = activities.filter(a => a.category === "Waste Reduction").length;
+  const total = activities.length;
+
+  if (water >= 10) badges.push("💧 Water Saver");
+  if (tree >= 5) badges.push("🌳 Tree Hero");
+  if (waste >= 10) badges.push("♻️ Waste Warrior");
+  if (total >= 50) badges.push("🌍 Eco Champion");
+
+  return badges;
+}
 
     console.log("Auth server connected to MongoDB");
   } catch (err) {
     console.error(err);
   }
 }
+
+app.get("/points", verifyToken, async (req, res) => {
+  try {
+    const userActivities = await activities.find({
+      userId: req.user.id
+    }).toArray();
+
+    const totalPoints = userActivities.reduce((sum, act) => {
+      return sum + calculatePoints(act.category, act.value);
+    }, 0);
+
+    res.send({ totalPoints });
+  } catch (err) {
+    res.status(500).send({ message: "Failed to calculate points" });
+  }
+});
+
+app.get("/badges", verifyToken, async (req, res) => {
+  try {
+    const userActivities = await activities.find({
+      userId: req.user.id
+    }).toArray();
+
+    const badges = calculateBadges(userActivities);
+
+    res.send({ badges });
+  } catch (err) {
+    res.status(500).send({ message: "Failed to fetch badges" });
+  }
+});
+
+app.get("/leaderboard", async (req, res) => {
+  try {
+    const allActivities = await activities.find().toArray();
+    const usersList = await users.find().toArray();
+
+    const scoreMap = {};
+
+    allActivities.forEach(act => {
+      if (!scoreMap[act.userId]) scoreMap[act.userId] = 0;
+      scoreMap[act.userId] += calculatePoints(act.category, act.value);
+    });
+
+    const leaderboard = Object.entries(scoreMap)
+      .map(([userId, points]) => {
+        const user = usersList.find(u => u._id.toString() === userId);
+        return {
+          name: user?.name || "User",
+          points
+        };
+      })
+      .sort((a, b) => b.points - a.points)
+      .map((item, index) => ({
+        rank: index + 1,
+        ...item
+      }));
+
+    res.send(leaderboard.slice(0, 10));
+  } catch (err) {
+    res.status(500).send({ message: "Leaderboard fetch failed" });
+  }
+});
+
+
 
 run();
 
