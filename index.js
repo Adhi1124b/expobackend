@@ -38,19 +38,14 @@ function calculateImpact(category, value) {
   switch (category) {
     case "Green Transportation":
       return { co2SavedKg: num * 0.2 };
-
     case "Water Conservation":
       return { waterSavedL: num };
-
     case "Tree Plantation":
       return { co2SavedKg: num * 21 };
-
     case "Energy Saving":
       return { co2SavedKg: num * 0.82 };
-
     case "Waste Reduction":
       return { co2SavedKg: num * 1.5 };
-
     default:
       return {};
   }
@@ -62,20 +57,15 @@ function calculatePoints(category, value) {
 
   switch (category) {
     case "Green Transportation":
-      return num * 2; // 2 points per km
-
+      return num * 2;
     case "Water Conservation":
-      return num * 1; // 1 point per liter
-
+      return num * 1;
     case "Tree Plantation":
-      return num * 50; // 50 points per tree
-
+      return num * 50;
     case "Energy Saving":
-      return num * 5; // 5 points per unit
-
+      return num * 5;
     case "Waste Reduction":
-      return num * 10; // 10 points per kg waste
-
+      return num * 10;
     default:
       return num;
   }
@@ -108,16 +98,15 @@ async function verifyToken(req, res, next) {
 
     const token = authHeader.split(" ")[1];
 
-    // 1️⃣ Try JWT verify first
+    // 1️⃣ Try JWT
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       req.user = decoded;
+      req.loginType = "jwt";
       return next();
-    } catch (err) {
-      // Not JWT -> continue Google verification
-    }
+    } catch (err) {}
 
-    // 2️⃣ Verify Google accessToken
+    // 2️⃣ Google accessToken
     const googleResponse = await axios.get(
       "https://www.googleapis.com/oauth2/v3/userinfo",
       {
@@ -136,13 +125,16 @@ async function verifyToken(req, res, next) {
 
     let user = await users.findOne({ email });
 
-    // Auto register if not exists
+    // Auto register Google user
     if (!user) {
       const newUser = {
         name: googleUser.name || "Google User",
         email,
         password: null,
-        googleLogin: true,
+        loginType: "google",
+        ecoPoints: 0,
+        streak: 0,
+        lastCheckinDate: null,
         createdAt: new Date(),
       };
 
@@ -159,6 +151,8 @@ async function verifyToken(req, res, next) {
       email: user.email,
       name: user.name,
     };
+
+    req.loginType = "google";
 
     next();
   } catch (error) {
@@ -191,6 +185,10 @@ async function run() {
           name,
           email,
           password: hashedPassword,
+          loginType: "jwt",
+          ecoPoints: 0,
+          streak: 0,
+          lastCheckinDate: null,
           createdAt: new Date(),
         };
 
@@ -244,18 +242,116 @@ async function run() {
       }
     });
 
-    // ================= PROFILE =================
-    app.get("/profile", verifyToken, async (req, res) => {
+    // ================= GET ME PROFILE =================
+    app.get("/me", verifyToken, async (req, res) => {
       try {
         const user = await users.findOne(
           { _id: new ObjectId(req.user.id) },
           { projection: { password: 0 } }
         );
 
-        res.send(user);
+        const today = new Date().toISOString().split("T")[0];
+
+        res.send({
+          user: {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            loginType: user.loginType || req.loginType,
+          },
+          ecoPoints: user.ecoPoints || 0,
+          streak: user.streak || 0,
+          checkedInToday: user.lastCheckinDate === today,
+        });
       } catch (err) {
-        console.error("PROFILE ERROR:", err);
+        console.error("ME ERROR:", err);
         res.status(500).send({ message: "Failed to fetch profile" });
+      }
+    });
+
+    // ================= UPDATE ME PROFILE =================
+    app.put("/me", verifyToken, async (req, res) => {
+      try {
+        const { name, email } = req.body;
+
+        if (!name || !email) {
+          return res.status(400).send({ message: "Name and Email required" });
+        }
+
+        // Check email already exists for another user
+        const existing = await users.findOne({ email });
+
+        if (existing && existing._id.toString() !== req.user.id) {
+          return res.status(400).send({ message: "Email already used" });
+        }
+
+        await users.updateOne(
+          { _id: new ObjectId(req.user.id) },
+          { $set: { name, email } }
+        );
+
+        res.send({ message: "Profile updated successfully" });
+      } catch (err) {
+        console.error("UPDATE ME ERROR:", err);
+        res.status(500).send({ message: "Failed to update profile" });
+      }
+    });
+
+    // ================= DAILY CHECKIN =================
+    app.post("/checkin", verifyToken, async (req, res) => {
+      try {
+        const userId = req.user.id;
+
+        const user = await users.findOne({ _id: new ObjectId(userId) });
+
+        const today = new Date();
+        const todayStr = today.toISOString().split("T")[0];
+
+        if (user.lastCheckinDate === todayStr) {
+          return res.status(400).send({ message: "Already checked in today" });
+        }
+
+        let newStreak = 1;
+
+        if (user.lastCheckinDate) {
+          const lastDate = new Date(user.lastCheckinDate);
+          const diffDays = (today - lastDate) / (1000 * 60 * 60 * 24);
+
+          if (diffDays >= 1 && diffDays < 2) {
+            newStreak = (user.streak || 0) + 1;
+          } else {
+            newStreak = 1;
+          }
+        }
+
+        let newPoints = user.ecoPoints || 0;
+        let bonus = 0;
+
+        if (newStreak % 10 === 0) {
+          bonus = 5;
+          newPoints += 5;
+        }
+
+        await users.updateOne(
+          { _id: new ObjectId(userId) },
+          {
+            $set: {
+              streak: newStreak,
+              ecoPoints: newPoints,
+              lastCheckinDate: todayStr,
+            },
+          }
+        );
+
+        res.send({
+          message: "Check-in successful",
+          streak: newStreak,
+          ecoPoints: newPoints,
+          bonus,
+        });
+      } catch (err) {
+        console.error("CHECKIN ERROR:", err);
+        res.status(500).send({ message: "Check-in failed" });
       }
     });
 
@@ -307,7 +403,7 @@ async function run() {
     });
 
     // ================= GET LOGGED USER ACTIVITIES =================
-    app.get("/activities", verifyToken, async (req, res) => {
+    app.get("/my-activities", verifyToken, async (req, res) => {
       try {
         const list = await activities
           .find({ userId: req.user.id })
@@ -316,26 +412,15 @@ async function run() {
 
         res.send(list);
       } catch (err) {
-        console.error("GET ACTIVITIES ERROR:", err);
+        console.error("MY ACTIVITIES ERROR:", err);
         res.status(500).send({ message: "Failed to fetch activities" });
       }
     });
 
-    // ================= DASHBOARD STATS =================
+    // ================= DASHBOARD =================
     app.get("/dashboard", verifyToken, async (req, res) => {
       try {
         const userId = req.user.id;
-
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-
-        const todayEnd = new Date();
-        todayEnd.setHours(23, 59, 59, 999);
-
-        const todayActivities = await activities.countDocuments({
-          userId,
-          createdAt: { $gte: todayStart, $lte: todayEnd },
-        });
 
         const totalActivities = await activities.countDocuments({ userId });
 
@@ -353,7 +438,6 @@ async function run() {
           .toArray();
 
         res.send({
-          todayActivities,
           totalActivities,
           totalCO2: totalImpact[0]?.co2 || 0,
           totalWater: totalImpact[0]?.water || 0,
@@ -364,7 +448,7 @@ async function run() {
       }
     });
 
-    // ================= SETTINGS + HISTORY =================
+    // ================= SETTINGS =================
     app.get("/settings", verifyToken, async (req, res) => {
       try {
         const userId = req.user.id;
@@ -487,7 +571,6 @@ async function run() {
     });
 
     // ================= LEADERBOARD USER DETAILS =================
-    // When you click one user in leaderboard
     app.get("/leaderboard/:userId", async (req, res) => {
       try {
         const userId = req.params.userId;
@@ -502,25 +585,12 @@ async function run() {
         }
 
         const userActivities = await activities
-          .find({ userId: userId })
+          .find({ userId })
           .sort({ createdAt: -1 })
-          .toArray();
-
-        const totalPointsAgg = await activities
-          .aggregate([
-            { $match: { userId: userId } },
-            {
-              $group: {
-                _id: null,
-                totalPoints: { $sum: "$pointsEarned" },
-              },
-            },
-          ])
           .toArray();
 
         res.send({
           user,
-          totalPoints: totalPointsAgg[0]?.totalPoints || 0,
           totalActivities: userActivities.length,
           activities: userActivities,
         });
@@ -530,7 +600,7 @@ async function run() {
       }
     });
 
-    console.log("✅ Auth server connected to MongoDB");
+    console.log("✅ Backend connected to MongoDB");
   } catch (err) {
     console.error("MONGO CONNECT ERROR:", err);
   }
@@ -542,3 +612,4 @@ run();
 app.listen(port, () => {
   console.log("🚀 Server running on port", port);
 });
+
