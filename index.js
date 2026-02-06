@@ -169,6 +169,104 @@ async function run() {
     const users = client.db("authdb").collection("users");
     const activities = client.db("authdb").collection("activities");
 
+    // ================= DAILY CHECK-IN =================
+app.post("/checkin", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const now = new Date();
+
+    const user = await users.findOne({ _id: new ObjectId(userId) });
+
+    if (!user) {
+      return res.status(404).send({ message: "User not found" });
+    }
+
+    let checkInCount = user.checkInCount || 0;
+    let lastCheckInAt = user.lastCheckInAt
+      ? new Date(user.lastCheckInAt)
+      : null;
+
+    // First check-in ever
+    if (!lastCheckInAt) {
+      checkInCount = 1;
+      await users.updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            checkInCount,
+            lastCheckInAt: now,
+          },
+        }
+      );
+
+      return res.send({
+        status: "checked-in",
+        checkInCount,
+        nextCheckInAfter: now.getTime() + 24 * 60 * 60 * 1000,
+        redeemed: false,
+      });
+    }
+
+    const diffHours = (now - lastCheckInAt) / (1000 * 60 * 60);
+
+    // ❌ Less than 24 hours
+    if (diffHours < 24) {
+      return res.status(400).send({
+        status: "too-early",
+        message: "You can check in only once every 24 hours",
+        nextCheckInAfter:
+          lastCheckInAt.getTime() + 24 * 60 * 60 * 1000,
+      });
+    }
+
+    // 🔁 More than 48 hours → reset
+    if (diffHours >= 48) {
+      checkInCount = 1;
+    } else {
+      checkInCount += 1;
+    }
+
+    let redeemed = false;
+    let ecoBonus = 0;
+
+    // 🎁 Redeem at 10
+    if (checkInCount >= 10) {
+      ecoBonus = 50;
+      redeemed = true;
+      checkInCount = 0;
+
+      await users.updateOne(
+        { _id: user._id },
+        {
+          $inc: { ecoPoints: ecoBonus },
+        }
+      );
+    }
+
+    await users.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          checkInCount,
+          lastCheckInAt: now,
+        },
+      }
+    );
+
+    res.send({
+      status: "checked-in",
+      checkInCount,
+      redeemed,
+      ecoBonus,
+      nextCheckInAfter: now.getTime() + 24 * 60 * 60 * 1000,
+    });
+  } catch (err) {
+    console.error("CHECK-IN ERROR:", err);
+    res.status(500).send({ message: "Check-in failed" });
+  }
+});
+
+
     // ================= REGISTER =================
     app.post("/register", async (req, res) => {
       try {
