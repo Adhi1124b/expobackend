@@ -18,7 +18,7 @@ app.use(express.json());
 const uri = process.env.MONGO_URI;
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// GOOGLE CLIENT ID (from your frontend)
+// GOOGLE CLIENT ID
 const GOOGLE_WEB_CLIENT_ID =
   "931013979776-ksm1tngjkn3jut2m7iafdqlafsb5qtkp.apps.googleusercontent.com";
 
@@ -87,7 +87,7 @@ function calculateBadges(totalPoints, totalActivities) {
   return badges;
 }
 
-// ================= TOKEN MIDDLEWARE (JWT + GOOGLE) =================
+// ================= TOKEN MIDDLEWARE =================
 async function verifyToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
@@ -213,7 +213,8 @@ async function run() {
 
         if (!user.password) {
           return res.status(400).send({
-            message: "This email is registered with Google. Please login with Google.",
+            message:
+              "This email is registered with Google. Please login with Google.",
           });
         }
 
@@ -242,7 +243,7 @@ async function run() {
       }
     });
 
-    // ================= GET ME PROFILE =================
+    // ================= GET ME =================
     app.get("/me", verifyToken, async (req, res) => {
       try {
         const user = await users.findOne(
@@ -266,92 +267,6 @@ async function run() {
       } catch (err) {
         console.error("ME ERROR:", err);
         res.status(500).send({ message: "Failed to fetch profile" });
-      }
-    });
-
-    // ================= UPDATE ME PROFILE =================
-    app.put("/me", verifyToken, async (req, res) => {
-      try {
-        const { name, email } = req.body;
-
-        if (!name || !email) {
-          return res.status(400).send({ message: "Name and Email required" });
-        }
-
-        // Check email already exists for another user
-        const existing = await users.findOne({ email });
-
-        if (existing && existing._id.toString() !== req.user.id) {
-          return res.status(400).send({ message: "Email already used" });
-        }
-
-        await users.updateOne(
-          { _id: new ObjectId(req.user.id) },
-          { $set: { name, email } }
-        );
-
-        res.send({ message: "Profile updated successfully" });
-      } catch (err) {
-        console.error("UPDATE ME ERROR:", err);
-        res.status(500).send({ message: "Failed to update profile" });
-      }
-    });
-
-    // ================= DAILY CHECKIN =================
-    app.post("/checkin", verifyToken, async (req, res) => {
-      try {
-        const userId = req.user.id;
-
-        const user = await users.findOne({ _id: new ObjectId(userId) });
-
-        const today = new Date();
-        const todayStr = today.toISOString().split("T")[0];
-
-        if (user.lastCheckinDate === todayStr) {
-          return res.status(400).send({ message: "Already checked in today" });
-        }
-
-        let newStreak = 1;
-
-        if (user.lastCheckinDate) {
-          const lastDate = new Date(user.lastCheckinDate);
-          const diffDays = (today - lastDate) / (1000 * 60 * 60 * 24);
-
-          if (diffDays >= 1 && diffDays < 2) {
-            newStreak = (user.streak || 0) + 1;
-          } else {
-            newStreak = 1;
-          }
-        }
-
-        let newPoints = user.ecoPoints || 0;
-        let bonus = 0;
-
-        if (newStreak % 10 === 0) {
-          bonus = 5;
-          newPoints += 5;
-        }
-
-        await users.updateOne(
-          { _id: new ObjectId(userId) },
-          {
-            $set: {
-              streak: newStreak,
-              ecoPoints: newPoints,
-              lastCheckinDate: todayStr,
-            },
-          }
-        );
-
-        res.send({
-          message: "Check-in successful",
-          streak: newStreak,
-          ecoPoints: newPoints,
-          bonus,
-        });
-      } catch (err) {
-        console.error("CHECKIN ERROR:", err);
-        res.status(500).send({ message: "Check-in failed" });
       }
     });
 
@@ -402,7 +317,7 @@ async function run() {
       }
     });
 
-    // ================= GET LOGGED USER ACTIVITIES =================
+    // ================= MY ACTIVITIES =================
     app.get("/my-activities", verifyToken, async (req, res) => {
       try {
         const list = await activities
@@ -445,31 +360,6 @@ async function run() {
       } catch (err) {
         console.error("DASHBOARD ERROR:", err);
         res.status(500).send({ message: "Dashboard fetch failed" });
-      }
-    });
-
-    // ================= SETTINGS =================
-    app.get("/settings", verifyToken, async (req, res) => {
-      try {
-        const userId = req.user.id;
-
-        const user = await users.findOne(
-          { _id: new ObjectId(userId) },
-          { projection: { password: 0 } }
-        );
-
-        const userActivities = await activities
-          .find({ userId })
-          .sort({ createdAt: -1 })
-          .toArray();
-
-        res.send({
-          user,
-          activities: userActivities,
-        });
-      } catch (error) {
-        console.error("SETTINGS ERROR:", error);
-        res.status(500).send({ message: "Failed to load settings data" });
       }
     });
 
@@ -528,7 +418,7 @@ async function run() {
       }
     });
 
-    // ================= LEADERBOARD =================
+    // ================= LEADERBOARD (WITH BADGES) =================
     app.get("/leaderboard", async (req, res) => {
       try {
         const leaderboard = await activities
@@ -537,6 +427,7 @@ async function run() {
               $group: {
                 _id: "$userId",
                 points: { $sum: "$pointsEarned" },
+                totalActivities: { $sum: 1 },
               },
             },
             { $sort: { points: -1 } },
@@ -555,13 +446,19 @@ async function run() {
           userMap[u._id.toString()] = u;
         });
 
-        const finalLeaderboard = leaderboard.map((item, index) => ({
-          rank: index + 1,
-          userId: item._id,
-          name: userMap[item._id]?.name || "Unknown User",
-          email: userMap[item._id]?.email || "",
-          points: item.points,
-        }));
+        const finalLeaderboard = leaderboard.map((item, index) => {
+          const userBadges = calculateBadges(item.points, item.totalActivities);
+
+          return {
+            rank: index + 1,
+            userId: item._id,
+            name: userMap[item._id]?.name || "Unknown User",
+            email: userMap[item._id]?.email || "",
+            points: item.points,
+            totalActivities: item.totalActivities,
+            badges: userBadges,
+          };
+        });
 
         res.send(finalLeaderboard);
       } catch (err) {
@@ -570,7 +467,7 @@ async function run() {
       }
     });
 
-    // ================= LEADERBOARD USER DETAILS =================
+    // ================= LEADERBOARD USER DETAILS (WITH BADGES) =================
     app.get("/leaderboard/:userId", async (req, res) => {
       try {
         const userId = req.params.userId;
@@ -589,9 +486,18 @@ async function run() {
           .sort({ createdAt: -1 })
           .toArray();
 
+        const totalPoints = userActivities.reduce(
+          (sum, act) => sum + (act.pointsEarned || 0),
+          0
+        );
+
+        const badges = calculateBadges(totalPoints, userActivities.length);
+
         res.send({
           user,
           totalActivities: userActivities.length,
+          totalPoints,
+          badges,
           activities: userActivities,
         });
       } catch (err) {
@@ -612,4 +518,5 @@ run();
 app.listen(port, () => {
   console.log("🚀 Server running on port", port);
 });
+
 
