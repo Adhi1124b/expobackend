@@ -4,7 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const axios = require("axios");
+const admin = require("firebase-admin");
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
@@ -18,9 +18,26 @@ app.use(express.json());
 const uri = process.env.MONGO_URI;
 const JWT_SECRET = process.env.JWT_SECRET;
 
+// ================= FIREBASE ADMIN =================
+// admin.initializeApp({
+//   credential: admin.credential.cert(
+//     JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+//   ),
+// });
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(
+      JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+    ),
+  });
+}
+
+
+
 // GOOGLE CLIENT ID
 const GOOGLE_WEB_CLIENT_ID =
-  "931013979776-ksm1tngjkn3jut2m7iafdqlafsb5qtkp.apps.googleusercontent.com";
+  "820920057869-2hfj2lblsjp7lk0ueuij5s22n9vdlq86.apps.googleusercontent.com";
 
 // ================= MONGO CLIENT =================
 const client = new MongoClient(uri, {
@@ -98,37 +115,34 @@ async function verifyToken(req, res, next) {
 
     const token = authHeader.split(" ")[1];
 
-    // 1️⃣ Try JWT
+    // ================= 1️⃣ TRY JWT =================
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       req.user = decoded;
       req.loginType = "jwt";
       return next();
-    } catch (err) {}
+    } catch (err) {
+      // continue to Firebase
+    }
 
-    // 2️⃣ Google accessToken
-    const googleResponse = await axios.get(
-      "https://www.googleapis.com/oauth2/v3/userinfo",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
+    // ================= 2️⃣ TRY FIREBASE =================
+    const decodedFirebase = await admin.auth().verifyIdToken(token);
 
-    const googleUser = googleResponse.data;
-    const email = googleUser.email;
+    const email = decodedFirebase.email?.toLowerCase();
+    const name = decodedFirebase.name || "Google User";
 
     if (!email) {
-      return res.status(403).send({ message: "Invalid Google token" });
+      return res.status(403).send({ message: "Invalid Firebase token" });
     }
 
     const users = client.db("authdb").collection("users");
 
     let user = await users.findOne({ email });
 
-    // Auto register Google user
+    // 🔁 Auto-register Google user
     if (!user) {
       const newUser = {
-        name: googleUser.name || "Google User",
+        name,
         email,
         password: null,
         loginType: "google",
@@ -139,11 +153,7 @@ async function verifyToken(req, res, next) {
       };
 
       const result = await users.insertOne(newUser);
-
-      user = {
-        ...newUser,
-        _id: result.insertedId,
-      };
+      user = { ...newUser, _id: result.insertedId };
     }
 
     req.user = {
@@ -153,10 +163,9 @@ async function verifyToken(req, res, next) {
     };
 
     req.loginType = "google";
-
     next();
   } catch (error) {
-    console.error("AUTH ERROR:", error.message);
+    console.error("AUTH ERROR:", error);
     res.status(403).send({ message: "Unauthorized token" });
   }
 }
@@ -270,7 +279,8 @@ app.post("/checkin", verifyToken, async (req, res) => {
     // ================= REGISTER =================
     app.post("/register", async (req, res) => {
       try {
-        const { name, email, password } = req.body;
+        const email = await req.body.email.toLowerCase();
+        const { name, password } = req.body;
 
         const existingUser = await users.findOne({ email });
         if (existingUser) {
@@ -302,7 +312,9 @@ app.post("/checkin", verifyToken, async (req, res) => {
     // ================= LOGIN =================
     app.post("/login", async (req, res) => {
       try {
-        const { email, password } = req.body;
+        const email = await req.body.email.toLowerCase();
+
+        const {  password } = req.body;
 
         const user = await users.findOne({ email });
         if (!user) {
