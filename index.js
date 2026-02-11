@@ -427,6 +427,34 @@ app.post("/checkin", verifyToken, async (req, res) => {
       }
     });
 
+    // ================= CHECK-IN STATUS =================
+app.get("/checkin/status", verifyToken, async (req, res) => {
+  try {
+    const user = await users.findOne({
+      _id: new ObjectId(req.user.id),
+    });
+
+    if (!user || !user.lastCheckInAt) {
+      return res.send({
+        checkInCount: 0,
+        nextCheckInAfter: null,
+      });
+    }
+
+    const nextCheckInAfter =
+      new Date(user.lastCheckInAt).getTime() + 24 * 60 * 60 * 1000;
+
+    res.send({
+      checkInCount: user.checkInCount || 0,
+      nextCheckInAfter,
+    });
+  } catch (err) {
+    res.status(500).send({ message: "Failed to fetch check-in status" });
+  }
+});
+
+    
+
     // ================= MY ACTIVITIES =================
     app.get("/my-activities", verifyToken, async (req, res) => {
       try {
@@ -441,6 +469,27 @@ app.post("/checkin", verifyToken, async (req, res) => {
         res.status(500).send({ message: "Failed to fetch activities" });
       }
     });
+
+    // ================= UPDATE PROFILE =================
+app.put("/profile", verifyToken, async (req, res) => {
+  try {
+    const { name, email } = req.body;
+
+    if (!name || !email) {
+      return res.status(400).send({ message: "Name and email required" });
+    }
+
+    await users.updateOne(
+      { _id: new ObjectId(req.user.id) },
+      { $set: { name, email: email.toLowerCase() } }
+    );
+
+    res.send({ message: "Profile updated successfully" });
+  } catch (err) {
+    res.status(500).send({ message: "Profile update failed" });
+  }
+});
+
 
     // ================= DASHBOARD =================
     app.get("/dashboard", verifyToken, async (req, res) => {
