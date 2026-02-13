@@ -427,6 +427,41 @@ app.post("/checkin", verifyToken, async (req, res) => {
       }
     });
 
+    // ================= GOOGLE OAUTH CALLBACK =================
+app.get("/oauth-callback", (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Google Login</title>
+      </head>
+      <body>
+        <script>
+          // Pass token back via URL hash (if present)
+          const hash = window.location.hash;
+          if (hash) {
+            window.location.href = window.location.origin + "/oauth-callback-success" + hash;
+          }
+        </script>
+        <h2>Login processing...</h2>
+      </body>
+    </html>
+  `);
+});
+
+    // Optional success landing (clean UX)
+app.get("/oauth-callback-success", (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <body>
+        <h2>You can close this window.</h2>
+      </body>
+    </html>
+  `);
+});
+
+
     // ================= CHECK-IN STATUS =================
 app.get("/checkin/status", verifyToken, async (req, res) => {
   try {
