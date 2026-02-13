@@ -428,38 +428,60 @@ app.post("/checkin", verifyToken, async (req, res) => {
     });
 
     // ================= GOOGLE OAUTH CALLBACK =================
-app.get("/oauth-callback", (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Google Login</title>
-      </head>
-      <body>
-        <script>
-          // Pass token back via URL hash (if present)
-          const hash = window.location.hash;
-          if (hash) {
-            window.location.href = window.location.origin + "/oauth-callback-success" + hash;
-          }
-        </script>
-        <h2>Login processing...</h2>
-      </body>
-    </html>
-  `);
+app.get("/oauth-callback", async (req, res) => {
+  try {
+    const code = req.query.code;
+
+    if (!code) {
+      return res.send("<h3>No authorization code received</h3>");
+    }
+
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_WEB_CLIENT_ID,
+        client_secret: process.env.GOOGLE_WEB_CLIENT_SECRET,
+        redirect_uri: "https://expobackend-ykn9.onrender.com/oauth-callback",
+        grant_type: "authorization_code",
+      }),
+    });
+
+    const tokenData = await tokenResponse.json();
+
+    if (!tokenData.id_token) {
+      console.error("Token exchange failed:", tokenData);
+      return res.send("<h3>Google token exchange failed</h3>");
+    }
+
+    // ✅ Redirect back with id_token so WebView can read it
+    res.redirect(
+      `/oauth-callback-success?id_token=${tokenData.id_token}`
+    );
+  } catch (err) {
+    console.error("OAuth Callback Error:", err);
+    res.status(500).send("OAuth processing failed");
+  }
 });
+
 
     // Optional success landing (clean UX)
 app.get("/oauth-callback-success", (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
+      <head>
+        <title>Login Successful</title>
+      </head>
       <body>
-        <h2>You can close this window.</h2>
+        <h2>Login completed successfully.</h2>
+        <p>You may now close this window.</p>
       </body>
     </html>
   `);
 });
+
 
 
     // ================= CHECK-IN STATUS =================
